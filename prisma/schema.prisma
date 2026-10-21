@@ -1,0 +1,79 @@
+datasource db {
+provider = "postgresql"
+url      = env("DATABASE_URL")
+}
+
+generator client {
+provider = "prisma-client-js"
+}
+
+enum Role {
+ADMIN
+OWNER
+VIEWER
+}
+
+model User {
+id            String           @id @default(uuid())
+email         String           @unique
+passwordHash  String
+name          String
+role          Role             @default(VIEWER)
+isActive      Boolean          @default(true) // Crucial for instant access revocation
+createdAt     DateTime         @default(now())
+updatedAt     DateTime         @updatedAt
+
+ownedDocuments Document[]      @relation("DocumentOwner")
+documentAccess DocumentAccess[]
+auditLogs     AuditLog[]
+}
+
+model Document {
+id           String           @id @default(uuid())
+title        String
+filename     String           // Randomized UUID filename on disk
+originalName String           //Original uploaded filename
+category     String
+filePath     String           // Stored securely outside public web root
+fileSize     Int
+mimeType     String
+ownerId      String
+owner        User             @relation("DocumentOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+createdAt    DateTime         @default(now())
+updatedAt    DateTime         @updatedAt
+
+accessList   DocumentAccess[]
+auditLogs    AuditLog[]
+}
+
+enum Permission {
+READ
+EDIT
+}
+
+model DocumentAccess {
+id         String     @id @default(uuid())
+userId     String
+user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+documentId String
+document   Document   @relation(fields: [documentId], references: [id], onDelete: Cascade)
+permission Permission @default(READ)
+createdAt  DateTime   @default(now())
+
+@@unique([userId, documentId])
+}
+
+model AuditLog {
+id         String   @id @default(uuid())
+timestamp  DateTime @default(now())
+userId     String?
+user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+action     String   // UPLOAD, DOWNLOAD, READ, DELETE, PERMISSION_GRANT, PERMISSION_REVOKE, ACCESS_DENIED
+entityType String   //e.g.,     "DOCUMENT", "PERMISSION", "USER"
+entityId   String   // ID for the target resource
+documentId String?
+document   Document? @relation(fields: [documentId], references: [id], onDelete: SetNull)
+ipAddress  String
+success    Boolean
+details    String?
+}
