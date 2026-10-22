@@ -1,57 +1,134 @@
-import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+
+import { NextRequest, NextResponse } from 'next/server';
 import bcrypt from 'bcrypt';
-import { Role } from '@prisma/client';
+import { Prisma, Role } from '@prisma/client';
+import { prisma } from '@/lib/prisma';
 
-export async function POST(request: Request) {
+export const runtime = 'nodejs';
+
+export async function POST(request: NextRequest) {
     try {
-        const body = await request.json();
-        const { email, password, name, role } = body;
+        const body: unknown = await request.json();
 
-        // 1. Validate required fields
-        if (!email || !password || !name) {
+        if (!body || typeof body !== 'object' || Array.isArray(body)) {
             return NextResponse.json(
-                { error: 'Name, email, and password are required.' },
+                { error: 'Invalid request body.' },
                 { status: 400 }
             );
         }
 
-        // 2. Check if the email is already registered
-        const existingUser = await prisma.user.findUnique({
-            where: { email },
-        });
+        const data = body as {
+            name?: unknown;
+            email?: unknown;
+            password?: unknown;
+            role?: unknown;
+        };
 
-        if (existingUser) {
+        if (
+            typeof data.name !== 'string' ||
+            typeof data.email !== 'string' ||
+            typeof data.password !== 'string'
+        ) {
             return NextResponse.json(
-                { error: 'An account with this email already exists.' },
+                { error: 'Name, email and password are required.' },
                 { status: 400 }
             );
         }
 
-        // 3. Hash the password securely using bcrypt
-        const hashedPassword = await bcrypt.hash(password, 12);
+        const name = data.name.trim();
+        const email = data.email.trim().toLowerCase();
+        const password = data.password;
 
-        // 4. Assign role (default to VIEWER if not provided or restricted)
-        const assignedRole = role && Object.values(Role).includes(role) ? role : Role.VIEWER;
+        if (name.length < 2 || name.length > 100) {
+            return NextResponse.json(
+                { error: 'Name must contain 2–100 characters.' },
+                { status: 400 }
+            );
+        }
 
-        // 5. Create the new user in the database
-        const newUser = await prisma.user.create({
+        if (
+            email.length > 254 ||
+            !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+        ) {
+            return NextResponse.json(
+                { error: 'Enter a valid email address.' },
+                { status: 400 }
+            );
+        }
+
+        if (
+            password.length < 12 ||
+            Buffer.byteLength(password, 'utf8') > 72
+        ) {
+            return NextResponse.json(
+                { error: 'Password must be at least 12 characters and no more than 72 UTF-8 bytes.' },
+                { status: 400 }
+            );
+        }
+
+        let role: Role = Role.VIEWER;
+
+        if (data.role !== undefined && data.role !== '') {
+            if (
+                typeof data.role !== 'string' ||
+                !Object.values(Role).includes(data.role as Role)
+            ) {
+                return NextResponse.json(
+                    { error: 'Invalid role.' },
+                    { status: 400 }
+                );
+            }
+
+            if (data.role === Role.ADMIN) {
+                return NextResponse.json(
+                    { error: 'Administrator accounts must be created by an administrator.' },
+                    { status: 403 }
+                );
+            }
+
+            role = data.role as Role;
+        }
+
+        const passwordHash = await bcrypt.hash(password, 12);
+
+        const user = await prisma.user.create({
             data: {
-                email,
                 name,
-                passwordHash: hashedPassword,
-                role: assignedRole,
+                email,
+                passwordHash,
+                role,
+            },
+            select: {
+                id: true,
+                name: true,
+                email: true,
+                role: true,
             },
         });
 
         return NextResponse.json(
-            { success: true, message: 'Account created successfully!', userId: newUser.id },
+            {
+                success: true,
+                message: 'Account created successfully. You can now log in.',
+                user,
+            },
             { status: 201 }
         );
     } catch (error) {
+        if (
+            error instanceof Prisma.PrismaClientKnownRequestError &&
+            error.code === 'P2002'
+        ) {
+            return NextResponse.json(
+                { error: 'An account with this email already exists.' },
+                { status: 409 }
+            );
+        }
+
         console.error('Signup error:', error);
+
         return NextResponse.json(
-            { error: 'Internal server error during registration.' },
+            { error: 'Unable to create the account. Please try again.' },
             { status: 500 }
         );
     }

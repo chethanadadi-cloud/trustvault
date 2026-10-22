@@ -1,76 +1,176 @@
+
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getCurrentSessionUser } from '@/lib/auth';
-import { Role, Prisma } from '@prisma/client';
-import fs from 'fs/promises';
-import path from 'path';
+import { getSupabaseStorage } from '@/lib/supabaseStorage';
+import { Permission } from '@prisma/client';
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
+function getClientIp(request: NextRequest): string {
+    return (
+        request.headers.get('x-real-ip') ??
+        request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ??
+        'unknown'
+    );
+}
+
+async function writeAudit(
+    userId: string | null,
+    entityId: string,
+    documentId: string | null,
+    ipAddress: string,
+    success: boolean,
+    action: string,
+    details: string
+) {
+    await prisma.auditLog.create({
+        data: {
+            userId,
+            action,
+            entityType: 'DOCUMENT',
+            entityId,
+            documentId,
+            ipAddress,
+            success,
+            details,
+        },
+    });
+}
 
 export async function GET(
     request: NextRequest,
     { params }: { params: Promise<{ id: string }> }
 ) {
+    const user = await getCurrentSessionUser();
+    const ipAddress = getClientIp(request);
+    const { id } = await params;
+
+    if (!user) {
+        return NextResponse.json(
+            { error: 'Unauthorized. Please log in.' },
+            { status: 401 }
+        );
+    }
+
     try {
-        const { id } = await params;
-        const user = await getCurrentSessionUser();
-        const ipAddress = request.headers.get('x-forwarded-for') || '127.0.0.1';
-
-        if (!user) {
-            return NextResponse.json({ error: 'Unauthorized: Please log in.' }, { status: 401 });
-        }
-
         const document = await prisma.document.findUnique({
             where: { id },
-            include: { accessList: true },
+            select: {
+                id: true,
+                title: true,
+                filename: true,
+                filePath: true,
+                originalName: true,
+                mimeType: true,
+                ownerId: true,
+                accessList: {
+                    where: { userId: user.id },
+                    select: { permission: true },
+                },
+            },
         });
 
         if (!document) {
-            return NextResponse.json({ error: 'Document not found.' }, { status: 404 });
-        }
-
-        const isAdmin = user.role === Role.ADMIN;
-        const isOwner = document.ownerId === user.userId;
-        const hasExplicitAccess = document.accessList.some((access) => access.userId === user.userId);
-
-        if (!isAdmin && !isOwner && !hasExplicitAccess) {
-            await prisma.auditLog.create({
-                data: {
-                    userId: user.userId,
-                    action: 'ACCESS_DENIED',
-                    documentId: document.id,
-                    ipAddress,
-                    success: false,
-                    details: 'Attempted to download without permission grant',
-                } as Prisma.AuditLogUncheckedCreateInput,
+            await writeAudit(
+                user.id,
+                id,
+                null,
+                ipAddress,
+                false,
+                'ACCESS_DENIED',
+                'Attempted to download a nonexistent document.'
+            ).catch((error) => {
+                console.error('Audit logging failed:', error);
             });
 
-            return NextResponse.json({ error: 'Forbidden: You do not have access to this document.' }, { status: 403 });
+            return NextResponse.json(
+                { error: 'Document not found.' },
+                { status: 404 }
+            );
         }
 
-        const uploadsDir = path.join(process.cwd(), 'secure_uploads');
-        const fullFilePath = path.join(uploadsDir, document.filePath);
-        const fileBuffer = await fs.readFile(fullFilePath);
+        const isOwner = document.ownerId === user.id;
+        const permission = document.accessList[0]?.permission;
 
-        await prisma.auditLog.create({
-            data: {
-                userId: user.userId,
-                action: 'DOWNLOAD',
-                documentId: document.id,
+        const canRead =
+            isOwner ||
+            permission === Permission.READ ||
+            permission === Permission.EDIT;
+
+        if (!canRead) {
+            await writeAudit(
+                user.id,
+                document.id,
+                document.id,
                 ipAddress,
-                success: true,
-                details: `Downloaded document: ${document.title}`,
-            } as Prisma.AuditLogUncheckedCreateInput,
-        });
+                false,
+                'ACCESS_DENIED',
+                'Attempted to download without document permission.'
+            );
 
-        return new NextResponse(fileBuffer, {
+            return NextResponse.json(
+                { error: 'Document not found.' },
+                { status: 404 }
+            );
+        }
+
+        // filePath is the private bucket object key, not a local disk path.
+        const { supabase, bucket } = getSupabaseStorage();
+
+        const { data: file, error: downloadError } = await supabase.storage
+            .from(bucket)
+            .download(document.filePath);
+
+        if (downloadError || !file) {
+            console.error(
+                'Supabase Storage download failed:',
+                downloadError?.message
+            );
+
+            return NextResponse.json(
+                { error: 'The stored document could not be retrieved.' },
+                { status: 502 }
+            );
+        }
+
+        // Do not return document contents unless the audit record succeeds.
+        await writeAudit(
+            user.id,
+            document.id,
+            document.id,
+            ipAddress,
+            true,
+            'DOWNLOAD',
+            `Downloaded document: ${document.title}`
+        );
+
+        const fileBuffer = Buffer.from(await file.arrayBuffer());
+        const safeFilename =
+            (document.originalName || document.title)
+                .replace(/[\r\n"\\/]/g, '_')
+                .slice(0, 180) || 'document';
+
+        const response = new NextResponse(new Uint8Array(fileBuffer), {
             status: 200,
             headers: {
-                'Content-Type': document.mimeType,
-                'Content-Disposition': `attachment; filename="${encodeURIComponent(document.title)}"`,
-                'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+                'Content-Type': document.mimeType || 'application/octet-stream',
+                'Content-Disposition': `attachment; filename="${safeFilename}"`,
+                'Content-Length': String(fileBuffer.length),
+                'Cache-Control': 'private, no-store, no-cache, must-revalidate',
+                Pragma: 'no-cache',
+                'X-Content-Type-Options': 'nosniff',
             },
         });
+
+        return response;
     } catch (error) {
-        console.error('Download error:', error);
-        return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+        console.error('Document download error:', error);
+
+        return NextResponse.json(
+            { error: 'Unable to download the document.' },
+            { status: 500 }
+        );
     }
 }

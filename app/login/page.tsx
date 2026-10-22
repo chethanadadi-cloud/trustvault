@@ -1,110 +1,231 @@
+
 'use client';
 
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 
 export default function LoginPage() {
-    const router = useRouter();
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
-    const [role, setRole] = useState('VIEWER'); // Default role selection
+    const [role, setRole] = useState('VIEWER');
     const [error, setError] = useState('');
-    const [loading, setLoading] = useState(false);
+    const [isSubmitting, setIsSubmitting] = useState(false);
 
-    const handleSubmit = async (e: React.FormEvent) => {
+    const router = useRouter();
+
+    const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
         setError('');
-        setLoading(true);
+        setIsSubmitting(true);
 
         try {
             const res = await fetch('/api/auth/login', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email, password, role }), // Pass role to backend
+                body: JSON.stringify({
+                    email: email.trim(),
+                    password,
+                    role,
+                }),
             });
 
-            const data = await res.json();
-
             if (res.ok) {
-                router.push('/dashboard');
+                router.replace('/dashboard');
                 router.refresh();
-            } else {
-                setError(data.error || 'Invalid credentials');
-                setLoading(false);
+                return;
             }
+
+            const data = await res.json().catch(() => ({}));
+            setError(
+                data.message || 'Invalid credentials or access denied.'
+            );
         } catch {
-            setError('An unexpected error occurred. Please try again.');
-            setLoading(false);
+            setError('An error occurred during sign in. Please try again.');
+        } finally {
+            setIsSubmitting(false);
         }
     };
 
     return (
-        <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-950 px-4 text-white">
-            <div className="w-full max-w-md rounded-2xl bg-zinc-900/80 p-8 shadow-xl backdrop-blur-md border border-zinc-800">
-                <div className="text-center mb-8">
-                    <h1 className="text-2xl font-bold tracking-tight text-white">TrustVault Secure Access</h1>
-                    <p className="text-sm text-zinc-400 mt-2">Enter your credentials and select your role.</p>
+        <main className="login-page-shell">
+            <section className="trustvault-card">
+                <div
+                    style={{
+                        marginBottom: '2rem',
+                        textAlign: 'center',
+                    }}
+                >
+                    <h1
+                        style={{
+                            fontSize: '1.75rem',
+                            fontWeight: 'bold',
+                            color: '#ffffff',
+                            marginBottom: '0.5rem',
+                            letterSpacing: '-0.025em',
+                        }}
+                    >
+                        TrustVault Secure Access
+                    </h1>
+
+                    <p
+                        style={{
+                            fontSize: '0.875rem',
+                            color: '#94a3b8',
+                            lineHeight: 1.6,
+                        }}
+                    >
+                        Enter your credentials to access your secure vault.
+                    </p>
                 </div>
 
                 {error && (
-                    <div className="mb-6 rounded-lg bg-red-500/10 border border-red-500/20 p-4 text-sm text-red-400 text-center">
+                    <div
+                        role="alert"
+                        style={{
+                            marginBottom: '1.5rem',
+                            padding: '0.875rem',
+                            backgroundColor: 'rgba(153, 27, 27, 0.4)',
+                            border: '1px solid rgba(185, 28, 28, 0.6)',
+                            borderRadius: '0.75rem',
+                            fontSize: '0.875rem',
+                            color: '#fca5a5',
+                            textAlign: 'center',
+                            lineHeight: 1.5,
+                        }}
+                    >
                         {error}
                     </div>
                 )}
 
-                <form onSubmit={handleSubmit} className="space-y-6">
+                <form
+                    onSubmit={handleLogin}
+                    style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '1.25rem',
+                    }}
+                >
                     <div>
-                        <label className="block text-xs font-semibold tracking-wider text-zinc-400 uppercase mb-2">
-                            Email Address
+                        <label
+                            htmlFor="login-email"
+                            style={{
+                                display: 'block',
+                                fontSize: '0.75rem',
+                                fontWeight: 'bold',
+                                letterSpacing: '0.05em',
+                                color: '#94a3b8',
+                                marginBottom: '0.5rem',
+                            }}
+                        >
+                            EMAIL ADDRESS
                         </label>
+
                         <input
+                            id="login-email"
                             type="email"
+                            autoComplete="username"
+                            required
                             value={email}
                             onChange={(e) => setEmail(e.target.value)}
-                            required
-                            className="w-full rounded-lg bg-zinc-950 border border-zinc-800 px-4 py-3 text-white placeholder-zinc-600 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                            placeholder="user@trustvault.com"
+                            placeholder="admin@trustvault.internal"
+                            className="trustvault-input"
+                            disabled={isSubmitting}
                         />
                     </div>
 
                     <div>
-                        <label className="block text-xs font-semibold tracking-wider text-zinc-400 uppercase mb-2">
-                            Password
+                        <label
+                            htmlFor="login-password"
+                            style={{
+                                display: 'block',
+                                fontSize: '0.75rem',
+                                fontWeight: 'bold',
+                                letterSpacing: '0.05em',
+                                color: '#94a3b8',
+                                marginBottom: '0.5rem',
+                            }}
+                        >
+                            PASSWORD
                         </label>
+
                         <input
+                            id="login-password"
                             type="password"
+                            autoComplete="current-password"
+                            required
                             value={password}
                             onChange={(e) => setPassword(e.target.value)}
-                            required
-                            className="w-full rounded-lg bg-zinc-950 border border-zinc-800 px-4 py-3 text-white placeholder-zinc-600 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                            placeholder="••••••••"
+                            placeholder="Enter your password"
+                            className="trustvault-input"
+                            disabled={isSubmitting}
                         />
                     </div>
 
                     <div>
-                        <label className="block text-xs font-semibold tracking-wider text-zinc-400 uppercase mb-2">
-                            Select Role
+                        <label
+                            htmlFor="login-role"
+                            style={{
+                                display: 'block',
+                                fontSize: '0.75rem',
+                                fontWeight: 'bold',
+                                letterSpacing: '0.05em',
+                                color: '#94a3b8',
+                                marginBottom: '0.5rem',
+                            }}
+                        >
+                            SELECT ROLE
                         </label>
+
                         <select
+                            id="login-role"
                             value={role}
                             onChange={(e) => setRole(e.target.value)}
-                            className="w-full rounded-lg bg-zinc-950 border border-zinc-800 px-4 py-3 text-white focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                            className="trustvault-input"
+                            disabled={isSubmitting}
                         >
-                            <option value="VIEWER">Viewer</option>
-                            <option value="OWNER">Owner</option>
-                            <option value="ADMIN">Admin</option>
+                            <option
+                                value="VIEWER"
+                                style={{
+                                    backgroundColor: '#0f172a',
+                                    color: '#ffffff',
+                                }}
+                            >
+                                Viewer
+                            </option>
+                            <option
+                                value="OWNER"
+                                style={{
+                                    backgroundColor: '#0f172a',
+                                    color: '#ffffff',
+                                }}
+                            >
+                                Owner
+                            </option>
+                            <option
+                                value="ADMIN"
+                                style={{
+                                    backgroundColor: '#0f172a',
+                                    color: '#ffffff',
+                                }}
+                            >
+                                Admin
+                            </option>
                         </select>
                     </div>
 
                     <button
                         type="submit"
-                        disabled={loading}
-                        className="w-full rounded-lg bg-indigo-600 py-3 font-medium text-white transition-colors hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:ring-offset-zinc-900 disabled:opacity-50"
+                        className="trustvault-btn"
+                        disabled={isSubmitting}
+                        style={{
+                            opacity: isSubmitting ? 0.7 : 1,
+                            cursor: isSubmitting ? 'wait' : 'pointer',
+                        }}
                     >
-                        {loading ? 'Signing in...' : 'Sign In / Register'}
+                        {isSubmitting ? 'Signing In…' : 'Sign In'}
                     </button>
                 </form>
-            </div>
-        </div>
+            </section>
+        </main>
     );
 }

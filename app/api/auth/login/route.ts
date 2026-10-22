@@ -1,75 +1,126 @@
-import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
-import bcrypt from 'bcrypt';
+
+import { NextRequest, NextResponse } from 'next/server';
 import { Role } from '@prisma/client';
-import { encryptSession } from '@/lib/auth';
+import { prisma } from '@/lib/prisma';
+import {
+    verifyPassword,
+    encryptSession,
+    setSessionCookie,
+} from '@/lib/auth';
 
-export async function POST(request: Request) {
+export const runtime = 'nodejs';
+
+export async function POST(request: NextRequest) {
     try {
-        const { email, password, role } = await request.json();
+        const body: unknown = await request.json();
 
-        if (!email || !password) {
-            return NextResponse.json({ error: 'Email and password are required' }, { status: 400 });
+        if (!body || typeof body !== 'object') {
+            return NextResponse.json(
+                { error: 'Invalid request body.' },
+                { status: 400 }
+            );
         }
 
-        // 1. Find user in database
-        let user = await prisma.user.findUnique({ where: { email } });
+        const data = body as {
+            email?: unknown;
+            password?: unknown;
+            role?: unknown;
+        };
 
-        // 2. AUTO-PROVISIONING WITH EXPLICIT USER-SELECTED ROLE
-        if (!user) {
-            const hashedPassword = await bcrypt.hash(password, 12);
-
-            // Validate and assign the role selected by the user on the frontend
-            let assignedRole: Role = Role.VIEWER;
-            if (role && Object.values(Role).includes(role as Role)) {
-                assignedRole = role as Role;
-            }
-
-            user = await prisma.user.create({
-                data: {
-                    email,
-                    name: email.split('@')[0],
-                    passwordHash: hashedPassword,
-                    role: assignedRole,
-                    isActive: true,
-                },
-            });
-        } else {
-            // 3. If user exists, check if active
-            if (!user.isActive) {
-                return NextResponse.json({ error: 'Invalid credentials or inactive account' }, { status: 401 });
-            }
-
-            // 4. Verify password using bcrypt
-            const passwordMatch = await bcrypt.compare(password, user.passwordHash);
-            if (!passwordMatch) {
-                return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
-            }
+        if (
+            typeof data.email !== 'string' ||
+            typeof data.password !== 'string' ||
+            !data.email.trim() ||
+            !data.password
+        ) {
+            return NextResponse.json(
+                { error: 'Email and password are required.' },
+                { status: 400 }
+            );
         }
 
-        // 5. Encrypt session safely
-        const sessionToken = await encryptSession({
-            id: user.id,
-            email: user.email,
-            role: user.role,
-        } as unknown as Parameters<typeof encryptSession>[0]);
+        if (data.password.length > 72) {
+            return NextResponse.json(
+                { error: 'Invalid email or password.' },
+                { status: 401 }
+            );
+        }
 
-        // 6. Create response and set cookie
-        const response = NextResponse.json({ success: true, role: user.role }, { status: 200 });
+        const email = data.email.trim().toLowerCase();
 
-        response.cookies.set({
-            name: 'trustvault_session',
-            value: sessionToken,
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'strict',
-            path: '/',
-            maxAge: 60 * 60 * 8, // 8 hours
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+            return NextResponse.json(
+                { error: 'Enter a valid email address.' },
+                { status: 400 }
+            );
+        }
+
+        let requestedRole: Role | undefined;
+
+        if (data.role !== undefined && data.role !== '') {
+            if (
+                typeof data.role !== 'string' ||
+                !Object.values(Role).includes(data.role as Role)
+            ) {
+                return NextResponse.json(
+                    { error: 'Invalid role selected.' },
+                    { status: 400 }
+                );
+            }
+
+            requestedRole = data.role as Role;
+        }
+
+        const user = await prisma.user.findUnique({
+            where: { email },
         });
 
-        return response;
+        // Do not create accounts during login or reveal whether an email exists.
+        if (
+            !user ||
+            !user.isActive ||
+            !(await verifyPassword(data.password, user.passwordHash))
+        ) {
+            return NextResponse.json(
+                { error: 'Invalid email or password.' },
+                { status: 401 }
+            );
+        }
+
+        // The selected role must match the role already stored in the database.
+        // Never let a login request change a user's privileges.
+        if (requestedRole && requestedRole !== user.role) {
+            return NextResponse.json(
+                { error: 'The selected role does not match this account.' },
+                { status: 403 }
+            );
+        }
+
+        const token = await encryptSession({
+            id: user.id,
+            email: user.email,
+            name: user.name,
+            role: user.role,
+        });
+
+        await setSessionCookie(token);
+
+        return NextResponse.json({
+            success: true,
+            message: 'Login successful.',
+            user: {
+                id: user.id,
+                name: user.name,
+                email: user.email,
+                role: user.role,
+            },
+        });
     } catch (error) {
         console.error('Login error:', error);
-        return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+
+        return NextResponse.json(
+            { error: 'Unable to log in right now. Check the server configuration.' },
+            { status: 500 }
+        );
     }
 }
