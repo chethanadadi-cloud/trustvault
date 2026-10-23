@@ -1,4 +1,3 @@
-
 import { NextRequest, NextResponse } from 'next/server';
 import { Role } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
@@ -14,7 +13,7 @@ export async function POST(request: NextRequest) {
     try {
         const body: unknown = await request.json();
 
-        if (!body || typeof body !== 'object') {
+        if (!body || typeof body !== 'object' || Array.isArray(body)) {
             return NextResponse.json(
                 { error: 'Invalid request body.' },
                 { status: 400 }
@@ -48,7 +47,10 @@ export async function POST(request: NextRequest) {
 
         const email = data.email.trim().toLowerCase();
 
-        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        if (
+            email.length > 254 ||
+            !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+        ) {
             return NextResponse.json(
                 { error: 'Enter a valid email address.' },
                 { status: 400 }
@@ -75,7 +77,8 @@ export async function POST(request: NextRequest) {
             where: { email },
         });
 
-        // Do not create accounts during login or reveal whether an email exists.
+        // Never create an account during login or disclose whether
+        // a particular email address is registered.
         if (
             !user ||
             !user.isActive ||
@@ -87,8 +90,8 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        // The selected role must match the role already stored in the database.
-        // Never let a login request change a user's privileges.
+        // The selected role must match the role stored in the database.
+        // A login request must never change a user's privileges.
         if (requestedRole && requestedRole !== user.role) {
             return NextResponse.json(
                 { error: 'The selected role does not match this account.' },
@@ -119,7 +122,9 @@ export async function POST(request: NextRequest) {
         console.error('Login error:', error);
 
         return NextResponse.json(
-            { error: 'Unable to log in right now. Check the server configuration.' },
+            {
+                error: 'Unable to log in right now. Check the server configuration.',
+            },
             { status: 500 }
         );
     }

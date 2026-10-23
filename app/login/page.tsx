@@ -1,7 +1,7 @@
-
 'use client';
 
 import React, { useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
 export default function LoginPage() {
@@ -29,18 +29,23 @@ export default function LoginPage() {
                 }),
             });
 
+            const data = await res.json().catch(() => ({}));
+
             if (res.ok) {
                 router.replace('/dashboard');
                 router.refresh();
                 return;
             }
 
-            const data = await res.json().catch(() => ({}));
             setError(
-                data.message || 'Invalid credentials or access denied.'
+                data.error ||
+                data.message ||
+                'Unable to sign in. Please check your credentials and try again.'
             );
         } catch {
-            setError('An error occurred during sign in. Please try again.');
+            setError(
+                'An error occurred during sign in. Please check your connection and try again.'
+            );
         } finally {
             setIsSubmitting(false);
         }
@@ -192,6 +197,7 @@ export default function LoginPage() {
                             >
                                 Viewer
                             </option>
+
                             <option
                                 value="OWNER"
                                 style={{
@@ -201,6 +207,7 @@ export default function LoginPage() {
                             >
                                 Owner
                             </option>
+
                             <option
                                 value="ADMIN"
                                 style={{
@@ -225,6 +232,37 @@ export default function LoginPage() {
                         {isSubmitting ? 'Signing In…' : 'Sign In'}
                     </button>
                 </form>
+
+                <div
+                    style={{
+                        marginTop: '1.5rem',
+                        paddingTop: '1.25rem',
+                        borderTop: '1px solid rgba(148, 163, 184, 0.2)',
+                        textAlign: 'center',
+                    }}
+                >
+                    <p
+                        style={{
+                            fontSize: '0.875rem',
+                            color: '#94a3b8',
+                            marginBottom: '0.5rem',
+                        }}
+                    >
+                        Do not have a TrustVault account?
+                    </p>
+
+                    <Link
+                        href="/signup"
+                        style={{
+                            color: '#60a5fa',
+                            fontSize: '0.9rem',
+                            fontWeight: 600,
+                            textDecoration: 'none',
+                        }}
+                    >
+                        Create an account
+                    </Link>
+                </div>
             </section>
         </main>
     );

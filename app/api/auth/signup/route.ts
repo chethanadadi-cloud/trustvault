@@ -1,4 +1,3 @@
-
 import { NextRequest, NextResponse } from 'next/server';
 import bcrypt from 'bcrypt';
 import { Prisma, Role } from '@prisma/client';
@@ -61,11 +60,15 @@ export async function POST(request: NextRequest) {
             Buffer.byteLength(password, 'utf8') > 72
         ) {
             return NextResponse.json(
-                { error: 'Password must be at least 12 characters and no more than 72 UTF-8 bytes.' },
+                {
+                    error: 'Password must be at least 12 characters and no more than 72 UTF-8 bytes.',
+                },
                 { status: 400 }
             );
         }
 
+        // Public registration defaults to VIEWER.
+        // ADMIN accounts cannot be created through public signup.
         let role: Role = Role.VIEWER;
 
         if (data.role !== undefined && data.role !== '') {
@@ -81,7 +84,9 @@ export async function POST(request: NextRequest) {
 
             if (data.role === Role.ADMIN) {
                 return NextResponse.json(
-                    { error: 'Administrator accounts must be created by an administrator.' },
+                    {
+                        error: 'Administrator accounts must be created by an administrator.',
+                    },
                     { status: 403 }
                 );
             }

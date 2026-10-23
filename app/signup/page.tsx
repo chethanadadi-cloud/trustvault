@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useState, type FormEvent } from 'react';
@@ -21,16 +20,25 @@ export default function SignupPage() {
         setLoading(true);
 
         try {
-            const response = await fetch('/api/auth/sign-up', {
+            const response = await fetch('/api/auth/signup', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name, email, password, role }),
+                body: JSON.stringify({
+                    name: name.trim(),
+                    email: email.trim().toLowerCase(),
+                    password,
+                    role,
+                }),
             });
 
-            const result = await response.json();
+            const result = await response.json().catch(() => ({}));
 
             if (!response.ok) {
-                setError(result.error || 'Unable to create your account.');
+                setError(
+                    result.error ||
+                    result.message ||
+                    'Unable to create your account. Please try again.'
+                );
                 return;
             }
 
@@ -60,6 +68,7 @@ export default function SignupPage() {
                         </label>
                         <input
                             id="name"
+                            name="name"
                             className="trustvault-input"
                             value={name}
                             onChange={(event) => setName(event.target.value)}
@@ -67,6 +76,7 @@ export default function SignupPage() {
                             minLength={2}
                             maxLength={100}
                             required
+                            disabled={loading}
                         />
                     </div>
 
@@ -76,6 +86,7 @@ export default function SignupPage() {
                         </label>
                         <input
                             id="email"
+                            name="email"
                             type="email"
                             className="trustvault-input"
                             value={email}
@@ -83,6 +94,7 @@ export default function SignupPage() {
                             autoComplete="email"
                             maxLength={254}
                             required
+                            disabled={loading}
                         />
                     </div>
 
@@ -92,6 +104,7 @@ export default function SignupPage() {
                         </label>
                         <input
                             id="password"
+                            name="password"
                             type="password"
                             className="trustvault-input"
                             value={password}
@@ -100,6 +113,7 @@ export default function SignupPage() {
                             minLength={12}
                             maxLength={72}
                             required
+                            disabled={loading}
                         />
                         <p className="mt-1 text-xs text-slate-400">
                             Use at least 12 characters.
@@ -112,9 +126,11 @@ export default function SignupPage() {
                         </label>
                         <select
                             id="role"
+                            name="role"
                             className="trustvault-input"
                             value={role}
                             onChange={(event) => setRole(event.target.value)}
+                            disabled={loading}
                         >
                             <option value="VIEWER">Viewer</option>
                             <option value="OWNER">Owner</option>
